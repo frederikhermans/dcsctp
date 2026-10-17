@@ -4775,4 +4775,105 @@ mod tests {
             SctpPacket::from_bytes(&expect_sent_packet!(socket_a2.poll_event()), &options).unwrap();
         assert!(matches!(packet.chunks.as_slice(), [Chunk::Data(_)]));
     }
+
+    #[test]
+    fn connect_socket_out_of_band() {
+        let options = default_options();
+        let socket_a_data = Socket::generate_connection_token(&options);
+        let socket_z_data = Socket::generate_connection_token(&options);
+
+        let mut socket_a = Socket::new("A", &options);
+        let mut socket_z = Socket::new("Z", &options);
+
+        assert!(socket_a.connect_with_connection_token(&socket_a_data, &socket_z_data));
+        assert!(socket_z.connect_with_connection_token(&socket_z_data, &socket_a_data));
+
+        expect_on_connected!(socket_a.poll_event());
+        expect_on_connected!(socket_z.poll_event());
+        assert_eq!(socket_a.state(), SocketState::Connected);
+        assert_eq!(socket_z.state(), SocketState::Connected);
+
+        let payload = vec![0u8; 10_000];
+        socket_a
+            .send(Message::new(StreamId(1), PpId(53), payload.clone()), &SendOptions::default())
+            .unwrap();
+        exchange_packets(&mut socket_a, &mut socket_z);
+
+        let msg = socket_z.get_next_message().unwrap();
+        assert_eq!(msg.stream_id, StreamId(1));
+        assert_eq!(msg.payload, payload);
+
+        let mut socket_z2 = Socket::new("Z2", &options);
+        handover_socket(&mut socket_z, &mut socket_z2);
+
+        socket_a
+            .send(Message::new(StreamId(1), PpId(53), vec![1, 2]), &SendOptions::default())
+            .unwrap();
+        exchange_packets(&mut socket_a, &mut socket_z2);
+
+        let msg = socket_z2.get_next_message().unwrap();
+        assert_eq!(msg.stream_id, StreamId(1));
+        assert_eq!(msg.payload, vec![1, 2]);
+    }
+
+    #[test]
+    fn connect_socket_out_of_band_invalid_token() {
+        let options = default_options();
+        let socket_a_data = Socket::generate_connection_token(&options);
+        let socket_z_data = vec![0x01, 0x00, 0x00];
+
+        let mut socket_a = Socket::new("A", &options);
+        let mut socket_z = Socket::new("Z", &options);
+
+        assert!(!socket_a.connect_with_connection_token(&socket_a_data, &socket_z_data));
+        assert!(!socket_z.connect_with_connection_token(&socket_z_data, &socket_a_data));
+        assert_eq!(socket_a.state(), SocketState::Closed);
+        assert_eq!(socket_z.state(), SocketState::Closed);
+    }
+
+    #[test]
+    fn connect_socket_out_of_band_with_padded_token() {
+        let options = default_options();
+        let mut socket_a_data = Socket::generate_connection_token(&options);
+        let mut socket_z_data = Socket::generate_connection_token(&options);
+
+        assert_ne!(socket_a_data.len() % 4, 0);
+        assert_ne!(socket_z_data.len() % 4, 0);
+
+        socket_a_data.resize((socket_a_data.len() + 3) & !3, 0x00);
+        socket_z_data.resize((socket_z_data.len() + 3) & !3, 0x00);
+
+        let mut socket_a = Socket::new("A", &options);
+        let mut socket_z = Socket::new("Z", &options);
+
+        assert!(socket_a.connect_with_connection_token(&socket_a_data, &socket_z_data));
+        assert!(socket_z.connect_with_connection_token(&socket_z_data, &socket_a_data));
+
+        expect_on_connected!(socket_a.poll_event());
+        expect_on_connected!(socket_z.poll_event());
+        assert_eq!(socket_a.state(), SocketState::Connected);
+        assert_eq!(socket_z.state(), SocketState::Connected);
+
+        let payload = vec![0u8; 10_000];
+        socket_a
+            .send(Message::new(StreamId(1), PpId(53), payload.clone()), &SendOptions::default())
+            .unwrap();
+        exchange_packets(&mut socket_a, &mut socket_z);
+
+        let msg = socket_z.get_next_message().unwrap();
+        assert_eq!(msg.stream_id, StreamId(1));
+        assert_eq!(msg.payload, payload);
+
+        let mut socket_z2 = Socket::new("Z2", &options);
+        handover_socket(&mut socket_z, &mut socket_z2);
+
+        socket_a
+            .send(Message::new(StreamId(1), PpId(53), vec![1, 2]), &SendOptions::default())
+            .unwrap();
+        exchange_packets(&mut socket_a, &mut socket_z2);
+
+        let msg = socket_z2.get_next_message().unwrap();
+        assert_eq!(msg.stream_id, StreamId(1));
+        assert_eq!(msg.payload, vec![1, 2]);
+    }
 }

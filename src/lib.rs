@@ -45,6 +45,11 @@ pub fn new_socket(name: &str, options: &Options) -> Box<dyn DcSctpSocket> {
     Box::new(socket::Socket::new(name, options))
 }
 
+/// Generates a connection token (`sctp-init`) for out-of-band connection establishment.
+pub fn generate_connection_token(options: &Options) -> Vec<u8> {
+    socket::Socket::generate_connection_token(options)
+}
+
 // Fuzzers, who are defined in a separate crate, need to access internal (non-public) functions that
 // they will fuzz. Expose these only for the fuzzing configuration.
 #[cfg(feature = "fuzz-internals")]

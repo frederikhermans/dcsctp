@@ -783,6 +783,11 @@ pub trait DcSctpSocket {
     /// will be generated when the connection is established.
     fn connect(&mut self);
 
+    /// Connects the socket synchronously using out-of-band connection tokens (`sctp-init`).
+    /// Returns `true` and emits [`SocketEvent::OnConnected`] if both tokens are valid and the
+    /// socket was closed.
+    fn connect_with_connection_token(&mut self, my_data: &[u8], peer_data: &[u8]) -> bool;
+
     /// Puts this socket to the state in which the original socket was when its
     /// [`SocketHandoverState`] was captured by [`Self::get_handover_state_and_close`].
     /// [`Self::restore_from_state`] is allowed only on the closed socket.

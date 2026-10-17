@@ -340,6 +340,12 @@ mod bridge {
         unsafe fn delete_socket(socket: *mut DcSctpSocket);
         fn state(socket: &DcSctpSocket) -> SocketState;
         fn connect(socket: &mut DcSctpSocket);
+        fn generate_connection_token(options: &Options) -> Vec<u8>;
+        fn connect_with_connection_token(
+            socket: &mut DcSctpSocket,
+            my_data: &[u8],
+            peer_data: &[u8],
+        ) -> bool;
         fn restore_from_state(socket: &mut DcSctpSocket, state: &SocketHandoverState);
         fn shutdown(socket: &mut DcSctpSocket);
         fn close(socket: &mut DcSctpSocket);
@@ -1052,6 +1058,18 @@ fn state(socket: &DcSctpSocket) -> bridge::SocketState {
 
 fn connect(socket: &mut DcSctpSocket) {
     socket.0.connect();
+}
+
+fn generate_connection_token(options: &bridge::Options) -> Vec<u8> {
+    crate::generate_connection_token(&options.into())
+}
+
+fn connect_with_connection_token(
+    socket: &mut DcSctpSocket,
+    my_data: &[u8],
+    peer_data: &[u8],
+) -> bool {
+    socket.0.connect_with_connection_token(my_data, peer_data)
 }
 
 fn shutdown(socket: &mut DcSctpSocket) {

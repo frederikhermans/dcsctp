@@ -19,8 +19,10 @@ use crate::api::SocketEvent;
 use crate::api::SocketTime;
 use crate::api::ZERO_CHECKSUM_ALTERNATE_ERROR_DETECTION_METHOD_NONE;
 use crate::math::round_down_to_4;
+use crate::packet::SerializableTlv;
 use crate::packet::abort_chunk::AbortChunk;
 use crate::packet::chunk::Chunk;
+use crate::packet::chunk::RawChunk;
 use crate::packet::cookie_ack_chunk::CookieAckChunk;
 use crate::packet::cookie_echo_chunk::CookieEchoChunk;
 use crate::packet::cookie_received_while_shutting_down::CookieReceivedWhileShuttingDownErrorCause;
@@ -127,6 +129,75 @@ pub(crate) fn do_connect(state: &mut State, ctx: &mut Context, now: SocketTime) 
     let verification_tag = fastrand::u32(MIN_VERIFICATION_TAG..MAX_VERIFICATION_TAG);
     *state = State::CookieWait(CookieWaitState { t1_init, initial_tsn, verification_tag });
     send_init(state, ctx);
+}
+
+pub(crate) fn do_generate_connection_token(options: &Options) -> Vec<u8> {
+    let initial_tsn = Tsn(fastrand::u32(MIN_INITIAL_TSN..MAX_INITIAL_TSN));
+    let verification_tag = fastrand::u32(MIN_VERIFICATION_TAG..MAX_VERIFICATION_TAG);
+    info!(
+        "Generating sctp-init. my_verification_tag={:08x}, my_initial_tsn={}",
+        verification_tag, initial_tsn
+    );
+    let support_zero_checksum = options.zero_checksum_alternate_error_detection_method
+        != ZERO_CHECKSUM_ALTERNATE_ERROR_DETECTION_METHOD_NONE;
+    let init = InitChunk {
+        initiate_tag: verification_tag,
+        a_rwnd: options.max_receiver_window_buffer_size as u32,
+        nbr_outbound_streams: options.announced_maximum_outgoing_streams,
+        nbr_inbound_streams: options.announced_maximum_incoming_streams,
+        initial_tsn,
+        parameters: make_capability_parameters(options, support_zero_checksum),
+    };
+    let mut out = vec![0; init.serialized_size()];
+    init.serialize_to(&mut out);
+    out
+}
+
+fn parse_init_chunk(data: &[u8]) -> Option<InitChunk> {
+    let (raw, remaining) = RawChunk::from_bytes(data).ok()?;
+    if !remaining.is_empty() {
+        return None;
+    }
+    InitChunk::try_from(raw).ok()
+}
+
+pub(crate) fn do_connect_with_connection_token(
+    state: &mut State,
+    ctx: &mut Context,
+    now: SocketTime,
+    my_data: &[u8],
+    peer_data: &[u8],
+) -> bool {
+    let (Some(my_init), Some(peer_init)) = (parse_init_chunk(my_data), parse_init_chunk(peer_data))
+    else {
+        return false;
+    };
+
+    let capabilities = compute_capabilities(
+        &ctx.options,
+        peer_init.nbr_outbound_streams,
+        peer_init.nbr_inbound_streams,
+        &peer_init.parameters,
+    );
+    ctx.send_queue.enable_message_interleaving(capabilities.message_interleaving);
+
+    let tie_tag = fastrand::u64(..);
+    let new_tcb = TransmissionControlBlock::new(
+        &ctx.options,
+        my_init.initiate_tag,
+        my_init.initial_tsn,
+        peer_init.initiate_tag,
+        peer_init.initial_tsn,
+        tie_tag,
+        peer_init.a_rwnd,
+        capabilities,
+        ctx.events.clone(),
+    );
+
+    *state = State::Established(new_tcb);
+    ctx.heartbeat_interval.start(now);
+    ctx.events.borrow_mut().add(SocketEvent::OnConnected());
+    true
 }
 
 pub(crate) fn handle_init(state: &mut State, ctx: &mut Context, chunk: InitChunk) {

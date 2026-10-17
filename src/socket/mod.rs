@@ -56,6 +56,8 @@ use crate::packet::unrecognized_chunk_error_cause::UnrecognizedChunkErrorCause;
 use crate::packet::user_initiated_abort_error_cause::UserInitiatedAbortErrorCause;
 use crate::socket::capabilities::Capabilities;
 use crate::socket::connect::do_connect;
+use crate::socket::connect::do_connect_with_connection_token;
+use crate::socket::connect::do_generate_connection_token;
 use crate::socket::connect::handle_cookie_ack;
 use crate::socket::connect::handle_cookie_echo;
 use crate::socket::connect::handle_init;
@@ -242,6 +244,11 @@ impl Socket {
             tx_error_counter: TxErrorCounter::new(options.max_retransmissions),
         };
         Socket { name: name.into(), now, state: State::Closed, ctx }
+    }
+
+    /// Generates a connection token (`sctp-init`) for out-of-band connection establishment.
+    pub fn generate_connection_token(options: &Options) -> Vec<u8> {
+        do_generate_connection_token(options)
     }
 
     fn handle_abort(&mut self, chunk: AbortChunk) {
@@ -482,6 +489,15 @@ impl DcSctpSocket for Socket {
         };
         let now = *self.now.borrow();
         do_connect(&mut self.state, &mut self.ctx, now);
+    }
+
+    fn connect_with_connection_token(&mut self, my_data: &[u8], peer_data: &[u8]) -> bool {
+        let State::Closed = self.state else {
+            warn!("Called connect_with_connection_token on a socket that is not closed");
+            return false;
+        };
+        let now = *self.now.borrow();
+        do_connect_with_connection_token(&mut self.state, &mut self.ctx, now, my_data, peer_data)
     }
 
     fn handle_input(&mut self, packet: &[u8]) {

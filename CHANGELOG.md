@@ -11,6 +11,8 @@ and this project adheres to
 ### Added
 
  - Support persisting queued and outstanding data across socket handover.
+ - Support out-of-band SCTP connection negotiation (`generate_connection_token`
+   and `connect_with_connection_token`) and expose it in CXX.
 
 ### Fixed
 
